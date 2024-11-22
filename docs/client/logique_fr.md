@@ -5,7 +5,7 @@
 
 Le projet vise à développer un client capable de fonctionner dans un environnement restreint en droits tout en permettant d’exécuter des programmes via un proxy intégré. Les fonctionnalités principales incluent :
 
-- Un script permettant de télécharger le client via des requêtes DNS, simplifiant le déploiement.
+- Un script permettant de télécharger le client + proxychains en binaires statiques.
 - Le client agit comme un proxy, permettant l'exécution de programmes à travers celui-ci. Par exemple :
   ```bash
   ./client "ssh user@host"
@@ -21,6 +21,10 @@ Le projet vise à développer un client capable de fonctionner dans un environne
   5. **Convertir les réponses DNS en réponses TCP/UDP**.
   6. **Retourner les réponses TCP/UDP** au programme client.
 
+- Les architectures qui seront supportées :
+  - Linux x86
+  - Linux x86-64
+  - Linux aarch64
 Le client est conçu pour évoluer dans un environnement aux droits restreints.
 
 ![](schema.png)
@@ -77,6 +81,11 @@ Le client est conçu pour évoluer dans un environnement aux droits restreints.
 ## Mise en place
 
 La solution pour le moment envisagée est celle de proxychains.
-1. Déterminer l'architecture de la machine cible.
-2. Mettre en place les fonctions permettant de télécharger des fichiers.
-3. Tester et vérifier la validité du fichier reçu.
+1. Configurer cargo pour compiler le client pour plusieurs architectures
+  - /binaires/architecture/client
+    - Soit sur GITHUB
+    - Soit sur un serveur externe
+2. Configuer un pipeline de compilation pour les binaires clients
+3. Configurer un script permettant de compiler proxychains pour plusieurs architectures
+4. Script BASH permettant de connaitre l'architecture + téléchargement de proxychains et du client. Mettre en place les fonctions permettant de télécharger des fichiers.
+5. Tester et vérifier la validité du fichier reçu.
