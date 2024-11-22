@@ -10,6 +10,7 @@ Le projet vise à développer un client capable de fonctionner dans un environne
   ```bash
   ./client "ssh user@host"
   ```
+
 - Fonctionnement du proxy intégré :
   1. **Intercepter les requêtes TCP/UDP** des programmes.
   2. **Convertir les requêtes TCP/UDP en requêtes DNS**.
@@ -42,6 +43,8 @@ Le client est conçu pour évoluer dans un environnement aux droits restreints.
 
 - **Solution proposée** :
   Télécharger et utiliser une version exécutable directement embarquée avec le client.
+  - Le serveur DNS sera configuré pour récupérer/compiler des binaires statique de proxychains pour chaque architecture.
+  - Le client, vérifiera si il possède proxychains, sinon déterminera l'architecture de la machine et récupérera le binaire par DNS.
 
 ---
 
@@ -70,3 +73,10 @@ Le client est conçu pour évoluer dans un environnement aux droits restreints.
   Ces solutions sont adaptées aux environnements avec des programmes utilisant des bibliothèques dynamiques.
 
 ---
+
+## Mise en place
+
+La solution pour le moment envisagée est celle de proxychains.
+1. Déterminer l'architecture de la machine cible.
+2. Mettre en place les fonctions permettant de télécharger des fichiers.
+3. Tester et vérifier la validité du fichier reçu.
