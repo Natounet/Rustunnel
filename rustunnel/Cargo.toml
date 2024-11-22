@@ -12,3 +12,10 @@ name = "server"
 path = "src/server.rs"
 
 [dependencies]
+
+
+[profile.release]
+lto = true        # Optimisation max
+debug = false
+opt-level = "z"   # Optimisation pour la taille
+codegen-units = 1
