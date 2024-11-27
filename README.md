@@ -12,9 +12,9 @@ The project aims to provide a powerful yet lightweight solution for bypassing ne
 
 ## Features
 
-[ ] **Covert Communication**: Transforms TCP/UDP traffic into DNS queries, allowing communication in restricted environments.
-[ ] **Custom DNS Protocol**: Encodes and decodes traffic into DNS queries and responses.
-[ ] **Bi-directional Proxy**: Enables seamless forwarding of traffic between client and server.
+- [ ] **Covert Communication**: Transforms TCP/UDP traffic into DNS queries, allowing communication in restricted environments.
+- [ ] **Custom DNS Protocol**: Encodes and decodes traffic into DNS queries and responses.
+- [ ] **Bi-directional Proxy**: Enables seamless forwarding of traffic between client and server.
 - **Rust-based Implementation**: Ensures high performance and memory safety.
 
 ---
