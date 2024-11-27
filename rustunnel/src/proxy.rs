@@ -4,28 +4,52 @@ use tokio::net::{TcpListener, TcpStream};
 use trust_dns_resolver::config::*;
 use trust_dns_resolver::AsyncResolver;
 
-// Implémentation d'un serveur Proxy de base
-// Prochaines étapes :
-// - Implémenter la logique de fragmentation
-// - Implémenter l'envoie des requêtes DNS
-
-// Custom error enum for SOCKS5 specific errors
+/// SOCKS5 protocol-specific error enumeration
+///
+/// Manages different error types that can occur during SOCKS5 proxy connection establishment
 #[derive(Debug)]
 enum Socks5Error {
-    InvalidFormat,       // Invalid request format
-    NoAcceptableMethods, // No supported authentication method
-    IoError(IoError),    // I/O related errors
-    DomainLookupFailed,  // DNS resolution failed
+    /// Invalid request format
+    InvalidFormat,
+
+    /// No acceptable authentication methods found
+    NoAcceptableMethods,
+
+    /// Input/Output related errors
+    IoError(IoError),
+
+    /// Domain name resolution failed
+    DomainLookupFailed,
 }
 
-// Convert IoError to Socks5Error for error handling
+/// Converts IoError to Socks5Error for unified error handling
+///
+/// # Arguments
+///
+/// * `e` - The input/output error to convert
+///
+/// # Returns
+///
+/// A corresponding SOCKS5 error
 impl From<IoError> for Socks5Error {
     fn from(e: IoError) -> Self {
         Socks5Error::IoError(e)
     }
 }
 
-// Resolve domain name to IP address
+/// Resolves a domain name to its IP address
+///
+/// # Arguments
+///
+/// * `domain` - The domain name to resolve
+///
+/// # Returns
+///
+/// The resolved IP address or a SOCKS5 error
+///
+/// # Errors
+///
+/// Returns `Socks5Error::DomainLookupFailed` if resolution fails
 async fn resolve_domain_to_ip(domain: &str) -> Result<String, Socks5Error> {
     // Create DNS resolver with default configuration
     let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
@@ -48,18 +72,41 @@ async fn resolve_domain_to_ip(domain: &str) -> Result<String, Socks5Error> {
         })
 }
 
-// Establish TCP connection to target service
+/// Establishes a TCP connection to a target service
+///
+/// # Arguments
+///
+/// * `ip` - The target IP address
+/// * `port` - The target service port
+///
+/// # Returns
+///
+/// A connected TCP socket or an I/O error
 async fn connect_to_service(ip: &str, port: u16) -> Result<TcpStream, IoError> {
     // Construct full address string
     let address = format!("{}:{}", ip, port);
+
     // Attempt to connect to the service
     let socket = TcpStream::connect(address).await?;
     Ok(socket)
 }
 
-// Handle SOCKS5 initial handshake (method selection)
+/// Handles the initial SOCKS5 handshake (method selection)
+///
+/// # Arguments
+///
+/// * `socket` - The client's TCP connection
+///
+/// # Returns
+///
+/// Success or a specific SOCKS5 error
+///
+/// # Errors
+///
+/// Possible errors include invalid format or no acceptable methods
 async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), Socks5Error> {
     let mut buf = [0; 1024];
+
     // Read client's method selection message
     let n = socket.read(&mut buf).await?;
 
@@ -87,9 +134,22 @@ async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), Socks5Err
     Ok(())
 }
 
-// Handle client's connection request
+/// Handles the client's TCP connection request
+///
+/// # Arguments
+///
+/// * `socket` - The client's TCP connection
+///
+/// # Returns
+///
+/// Success or an I/O error
+///
+/// # Errors
+///
+/// Possible errors include invalid request, domain resolution failure, etc.
 async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError> {
     let mut buf = [0; 1024];
+
     // Read connection request
     let n = socket.read(&mut buf).await?;
     if n < 4 {
@@ -177,7 +237,13 @@ async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError
     Ok(())
 }
 
-// Handle individual client connection
+/// Handles an individual client connection
+///
+/// # Arguments
+///
+/// * `socket` - The client's TCP connection
+///
+/// Performs SOCKS5 handshake and connection request processing
 async fn handle_connection(mut socket: TcpStream) {
     // Perform SOCKS5 handshake
     if let Err(e) = handle_socks5_handshake(&mut socket).await {
@@ -191,7 +257,17 @@ async fn handle_connection(mut socket: TcpStream) {
     }
 }
 
-// Main entry point - SOCKS5 proxy server
+/// Main entry point for the SOCKS5 proxy server
+///
+/// # Configuration
+///
+/// - Listens on localhost:1080
+/// - Uses 10 worker threads
+/// - Handles connections concurrently
+///
+/// # Panics
+///
+/// May panic if port binding fails
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
     // Bind to localhost on port 1080 (standard SOCKS5 port)
