@@ -11,8 +11,14 @@ path = "src/client.rs"
 name = "server"
 path = "src/server.rs"
 
-[dependencies]
+[[bin]]
+name = "proxy"
+path = "src/proxy.rs"
 
+
+[dependencies]
+tokio = { version = "1.41.1", features = ["full"] }
+trust-dns-resolver = "0.20.4"
 
 [profile.release]
 lto = true        # Optimisation max
