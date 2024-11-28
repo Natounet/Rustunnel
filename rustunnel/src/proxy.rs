@@ -16,7 +16,7 @@ enum Socks5Error {
     NoAcceptableMethods,
 
     /// Input/Output related errors
-    IoError(IoError),
+    IoError(()),
 
     /// Domain name resolution failed
     DomainLookupFailed,
@@ -32,8 +32,8 @@ enum Socks5Error {
 ///
 /// A corresponding SOCKS5 error
 impl From<IoError> for Socks5Error {
-    fn from(e: IoError) -> Self {
-        Socks5Error::IoError(e)
+    fn from(_e: IoError) -> Self {
+        Socks5Error::IoError(())
     }
 }
 
