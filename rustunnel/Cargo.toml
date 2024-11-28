@@ -15,10 +15,19 @@ path = "src/server.rs"
 name = "proxy"
 path = "src/proxy.rs"
 
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[lib]
+name = "rustunnel"
+path = "src/utils.rs"
 
 [dependencies]
 tokio = { version = "1.41.1", features = ["full"] }
 trust-dns-resolver = "0.20.4"
+rand = "0.8.5"
+base-62 = "0.1.1"
 
 [profile.release]
 lto = true        # Optimisation max
