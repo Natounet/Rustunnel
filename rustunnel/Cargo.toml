@@ -17,13 +17,14 @@ path = "src/main.rs"
 
 [lib]
 name = "rustunnel"
-path = "src/utils.rs"
+path = "src/libs.rs"
 
 [dependencies]
 tokio = { version = "1.41.1", features = ["full"] }
 trust-dns-resolver = "0.20.4"
+regex = "1.11.1"
 rand = "0.8.5"
-base-62 = "0.1.1"
+base32 = "0.5.1"
 
 [profile.release]
 lto = true        # Optimisation max
