@@ -1,4 +1,5 @@
-use rustunnel::{split_bytes_into_labels, encode_base62, decode_base62}; // Importez les fonctions de votre module
+use rustunnel::utils::{split_bytes_into_labels, encode_base32, decode_base32};
+use base32::{Alphabet, encode as base32_encode};
 
 #[test]
 fn test_split_bytes_into_labels() {
@@ -18,28 +19,28 @@ fn test_split_bytes_into_labels() {
 }
 
 #[test]
-fn test_encode_base62() {
+fn test_encode_base32() {
     let labels = vec![
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     ];
 
-    let encoded_labels = encode_base62(labels.clone());
+    let encoded_labels = encode_base32(labels.clone());
 
-    // Vérifie que chaque label est encodé en base62
+    // Vérifie que chaque label est encodé en base32
     assert_eq!(encoded_labels.len(), 2);
     assert!(encoded_labels[0].chars().all(|c| c.is_ascii_alphanumeric()));
     assert!(encoded_labels[1].chars().all(|c| c.is_ascii_alphanumeric()));
 }
 
 #[test]
-fn test_decode_base62() {
+fn test_decode_base32() {
     let labels = vec![
-        base_62::encode(&vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-        base_62::encode(&vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19]),
+        base32_encode(Alphabet::Rfc4648 { padding: false }, &vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        base32_encode(Alphabet::Rfc4648 { padding: false }, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19]),
     ];
 
-    let decoded_labels = decode_base62(labels.clone());
+    let decoded_labels = decode_base32(labels.clone());
 
     // Vérifie que les labels sont correctement décodés
     assert_eq!(decoded_labels.len(), 2);
@@ -54,8 +55,8 @@ fn test_encode_decode_cycle() {
         vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     ];
 
-    let encoded_labels = encode_base62(labels.clone());
-    let decoded_labels = decode_base62(encoded_labels);
+    let encoded_labels = encode_base32(labels.clone());
+    let decoded_labels = decode_base32(encoded_labels);
 
     // Vérifie que l'encodage et le décodage sont cohérents
     assert_eq!(decoded_labels, labels);
@@ -66,8 +67,8 @@ fn test_full_pipeline() {
     let bytes: Vec<u8> = (0..200).collect(); // Tableau de 200 octets
 
     let labels = split_bytes_into_labels(&bytes);
-    let encoded_labels = encode_base62(labels.clone());
-    let decoded_labels = decode_base62(encoded_labels);
+    let encoded_labels = encode_base32(labels.clone());
+    let decoded_labels = decode_base32(encoded_labels);
     let reassembled_bytes: Vec<u8> = decoded_labels.concat();
 
     // Vérifie que les données finales sont identiques aux données d'origine

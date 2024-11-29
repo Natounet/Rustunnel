@@ -1,7 +1,6 @@
-// DNS labels = max 63 chars.
-// 63 base62 chars = 378 bits.
-use base_62;
+use base32::{Alphabet, encode as base32_encode, decode as base32_decode};
 
+/// Divise une séquence d’octets (bytes) en labels de taille maximale 63 caractères
 pub fn split_bytes_into_labels(bytes: &[u8]) -> Vec<Vec<u8>> {
     let mut labels = Vec::new();
     let mut current_label = Vec::new();
@@ -22,22 +21,21 @@ pub fn split_bytes_into_labels(bytes: &[u8]) -> Vec<Vec<u8>> {
     labels
 }
 
-pub fn encode_base62(labels: Vec<Vec<u8>>) -> Vec<String> {
-    let mut encoded_labels = Vec::new();
-
-    for label in labels {
-        encoded_labels.push(base_62::encode(&label));
-    }
-
-    encoded_labels
+/// Encode chaque label en base32
+pub fn encode_base32(labels: Vec<Vec<u8>>) -> Vec<String> {
+    labels
+        .into_iter()
+        .map(|label| base32_encode(Alphabet::Rfc4648 { padding: false }, &label))
+        .collect()
 }
 
-pub fn decode_base62(labels: Vec<String>) -> Vec<Vec<u8>> {
-    let mut decoded_labels = Vec::new();
-
-    for label in labels {
-        decoded_labels.push(base_62::decode(&label).unwrap());
-    }
-
-    decoded_labels
+/// Décode chaque label de base32 en octets
+pub fn decode_base32(labels: Vec<String>) -> Vec<Vec<u8>> {
+    labels
+        .into_iter()
+        .map(|label| {
+            base32_decode(Alphabet::Rfc4648 { padding: false }, &label)
+                .expect("Failed to decode base32 label")
+        })
+        .collect()
 }

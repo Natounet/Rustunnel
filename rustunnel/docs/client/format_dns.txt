@@ -7,19 +7,18 @@ Ce document décrit le format des requêtes et des réponses DNS utilisées dans
 ## 1. Ouverture de session
 ### Requête (client → serveur)
 ```
-CREATE.[HOST_B64].[PORT].[UID].[DOMAIN]
+CREATE.[HOST_B64].[PORT].[DOMAIN]
 ```
 - **HOST_B64** : Hôte cible encodé en Base64.
 - **PORT** : Port cible.
-- **UID** : Identifiant unique de la session TCP.
 - **DOMAIN** : Domaine utilisé pour le tunneling.
 
 ### Réponse (serveur → client)
 ```
-SUCCESS|FAIL
+UID|-1 ( FAIL)
 ```
-- **SUCCESS** : Session créée avec succès.
-- **FAIL** : Échec de la création de session.
+- UID : Session créée avec succès, la valeur est l'UID pour cette session TCP
+- -1 : Échec de la création de session.
 
 ---
 
