@@ -9,6 +9,7 @@ pub fn get_resolver() -> Resolver {
 
 
 
+
 pub fn is_valid_fqdn(domain: &str) -> bool {
     const MAX_DOMAIN_LENGTH: usize = 255;
     const MAX_LABEL_LENGTH: usize = 63;
@@ -96,6 +97,31 @@ pub fn create_tcp_session(host: &str, port: u16, domain: &str, resolver: &Resolv
         }
 
         // Return the UID
+        Ok(response_str.to_string())
+    } else {
+        Err("No response received".into())
+    }
+}
+pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn std::error::Error>> {
+    // Check if query is valid FQDN
+    if !is_valid_fqdn(&query) {
+        eprintln!("Invalid query: {}", query);
+        return Err("Invalid query".into());
+    }
+
+    println!("Sending query: {}", query);
+
+    // Make the DNS lookup
+    let response = match resolver.lookup(query, trust_dns_resolver::proto::rr::RecordType::TXT) {
+        Ok(response) => response,
+        Err(e) => return Err(Box::new(e))
+    };
+
+    // Parse the response
+    if let Some(txt) = response.iter().next() {
+        let txt_string = txt.to_string();
+        let response_str = String::from_utf8_lossy(txt_string.as_bytes());
+
         Ok(response_str.to_string())
     } else {
         Err("No response received".into())
