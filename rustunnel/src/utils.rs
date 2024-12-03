@@ -1,4 +1,5 @@
 use base32::{Alphabet, encode as base32_encode, decode as base32_decode};
+use rand::Rng;
 
 /// Divise une séquence d’octets (bytes) en labels de taille maximale 63 caractères
 pub fn split_bytes_into_labels(bytes: &[u8]) -> Vec<Vec<u8>> {
@@ -38,4 +39,9 @@ pub fn decode_base32(labels: Vec<String>) -> Vec<Vec<u8>> {
                 .expect("Failed to decode base32 label")
         })
         .collect()
+}
+
+// Fonction de génération d'un UUID u16 aléatoire
+pub fn generate_u16_uuid() -> u16 {
+    rand::thread_rng().gen()
 }

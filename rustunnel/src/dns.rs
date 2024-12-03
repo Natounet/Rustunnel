@@ -55,7 +55,7 @@ pub fn verify_host(host: &str) -> bool {
     is_valid_fqdn(host)
 }
 
-pub fn create_tcp_session(host: &str, port: u16, domain: &str, resolver: &Resolver) -> Result<String, Box<dyn std::error::Error>> {
+pub fn create_tcp_session(host: &str, port: u16, domain: &str, resolver: &Resolver) -> Result<u16, Box<dyn std::error::Error>> {
 
     // Validate host
     if !verify_host(host) {
@@ -97,7 +97,7 @@ pub fn create_tcp_session(host: &str, port: u16, domain: &str, resolver: &Resolv
         }
 
         // Return the UID
-        Ok(response_str.to_string())
+        Ok(response_str.parse::<u16>().unwrap())
     } else {
         Err("No response received".into())
     }
