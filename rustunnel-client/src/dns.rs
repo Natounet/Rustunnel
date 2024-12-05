@@ -55,7 +55,7 @@ pub fn create_tcp_session(
     port: u16,
     domain: &str,
     resolver: &Resolver,
-) -> Result<u16, Box<dyn std::error::Error>> {
+) -> Result<u16, String> {
     // Validate host
     if !verify_host(host) {
         return Err("Invalid host".into());
@@ -76,12 +76,11 @@ pub fn create_tcp_session(
     }
 
     println!("Query: {}", query);
-    todo!("TODO: implement query");
 
     // Make the DNS lookup
     let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
         Ok(response) => response,
-        Err(e) => return Err(Box::new(e)),
+        Err(_) => return Err(format!("ERROR : Failed to resolve the domain : {}", domain)),
     };
 
     // Parse the response
@@ -101,7 +100,10 @@ pub fn create_tcp_session(
     }
 }
 
-pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn std::error::Error>> {
+pub fn send_request(
+    query: &String,
+    resolver: &Resolver,
+) -> Result<String, Box<dyn std::error::Error>> {
     // Check if query is valid FQDN
     if !is_valid_fqdn(&query) {
         eprintln!("Invalid query: {}", query);
@@ -155,7 +157,7 @@ pub fn send_tcp_data(
     tcp_bytes: &[u8],
     domain: &str,
     resolver: &Resolver,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), String> {
     // Split TCP data into chunks and encode as base32
     let data_chunks = split_data_into_label_chunks(tcp_bytes);
     let data_b64 = encode_base32(data_chunks);
@@ -183,10 +185,16 @@ pub fn send_tcp_data(
 
     // TODO ; Make the requests in parallel
     for query in queries {
+        let mut timeout = 0;
+
         loop {
-            match send_req(query.clone(), resolver) {
+            match send_request(&query, resolver) {
                 Ok(_) => break, // Success, move to next query
                 Err(e) => {
+                    if timeout >= 10 {
+                        return Err("ERROR : Failed to contact the DNS server for 10 times when trying to send the queries".to_string());
+                    }
+                    timeout += 1;
                     eprintln!("Error sending request: {}, retrying...", e);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     continue;
