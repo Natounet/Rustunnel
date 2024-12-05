@@ -1,0 +1,22 @@
+[package]
+name = "rustunnel-client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "proxy"
+path = "src/proxy.rs"
+
+
+[dependencies]
+tokio = { version = "1.41.1", features = ["full"] }
+trust-dns-resolver = "0.20.4"
+regex = "1.11.1"
+rand = "0.8.5"
+base32 = "0.5.1"
+
+[profile.release]
+lto = true        # Optimisation max
+debug = false
+opt-level = "z"   # Optimisation pour la taille
+codegen-units = 1
