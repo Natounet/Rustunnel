@@ -90,13 +90,13 @@ pub fn create_tcp_session(
 
         // Check if response indicates failure
         if response_str == "-1" {
-            return Err("Failed to create TCP session".into());
+            return Err("ERROR : Failed to create the TCP session".into());
         }
 
         // Return the UID
         Ok(response_str.parse::<u16>().unwrap())
     } else {
-        Err("No response received".into())
+        Err("ERROR : No response received from the DNS server".into())
     }
 }
 
