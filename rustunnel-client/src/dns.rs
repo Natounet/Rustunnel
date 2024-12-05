@@ -170,7 +170,7 @@ pub fn send_tcp_data(
                 "{}.{}.{}.{}.{}",
                 label,
                 i,
-                data_b64.len() - 1,
+                data_b64.len(),
                 session_id,
                 domain
             );
