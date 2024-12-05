@@ -56,7 +56,10 @@ async fn resolve_domain_to_ip(domain: &str) -> Result<String, Box<dyn std::error
 
     // Utiliser le resolver
     let response = resolver.lookup_ip(domain).await?;
-    let addr = response.iter().next().ok_or("No IP addresses found")?;
+    let addr = response
+        .iter()
+        .next()
+        .ok_or(format!("Resolution for the domain {} failed", domain))?;
 
     Ok(addr.to_string())
 }
@@ -77,6 +80,7 @@ async fn connect_to_service(ip: &str, port: u16) -> Result<TcpStream, IoError> {
 
     // Attempt to connect to the service
     let socket = TcpStream::connect(address).await?;
+    println!("Connected to {}:{}", ip, port);
     Ok(socket)
 }
 
@@ -128,11 +132,14 @@ async fn proxy_bidirectional(
             // Client -> Service
             result = client_read.read(&mut buffer_client) => {
                 match result? {
-                    0 => break, // Connection fermée
+                    0 => {
+                        println!("[INFO]The client closed the connection.");
+                        break;
+                    }
                     n => {
                         // Log des données du client vers le service
                         println!("Client -> Service: {} bytes", n);
-                        println!("Data: {:?}", &buffer_client[..n]);
+                        //println!("Data: {:?}", &buffer_client[..n]);
 
                         // Envoie au service
                         service_write.write_all(&buffer_client[..n]).await?;
@@ -142,11 +149,14 @@ async fn proxy_bidirectional(
             // Service -> Client
             result = service_read.read(&mut buffer_service) => {
                 match result? {
-                    0 => break, // Connection fermée
+                    0 => {
+                        println!("[INFO] The server closed the connection");
+                        break;
+                    }
                     n => {
                         // Log des données du service vers le client
                         println!("Service -> Client: {} bytes", n);
-                        println!("Data: {:?}", &buffer_service[..n]);
+                        //println!("Data: {:?}", &buffer_service[..n]);
 
                         // Envoie au client
                         client_write.write_all(&buffer_service[..n]).await?;
