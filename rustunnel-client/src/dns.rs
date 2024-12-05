@@ -197,3 +197,41 @@ pub fn send_tcp_data(
 
     Ok(())
 }
+
+/// Retrieve the response data from the server
+/// Query :RESPONSE.UID.DOMAIN
+/// Response : Base32 encoded data or EOF
+pub fn retrieve_response(
+    session_id: u16,
+    domain: &str,
+    resolver: &Resolver,
+) -> Result<Vec<u8>, String> {
+    let mut b32_encoded_fragments: Vec<String> = vec![];
+    let query: String = format!("RESPONSE.{}.{}", session_id, domain);
+
+    loop {
+        let i: usize = 0;
+        match send_request(&query, resolver) {
+            Ok(response) => match response {
+                ref eol if eol == "EOL" => break,
+                b32_content => b32_encoded_fragments.push(b32_content),
+            },
+
+            // Retry to contact the server 10 times
+            Err(_) => {
+                if i == 10 {
+                    break;
+                } else {
+                    return Err(
+                        "ERROR : Failed to contact the DNS server for 10 times when trying to get responses.".to_string()
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(decode_base32(b32_encoded_fragments)
+        .into_iter()
+        .flatten()
+        .collect())
+}
