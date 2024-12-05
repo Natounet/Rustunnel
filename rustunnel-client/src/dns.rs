@@ -133,18 +133,11 @@ pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn st
 ///
 /// Data Query:
 /// ```text
-/// [DATA_B64].[SEQ].[UID].[DOMAIN]
+/// [DATA_B64].[SEQ].[MAXSEQ].[UID].[DOMAIN]
 /// ```
 /// - DATA_B64: Base32 encoded data fragment
 /// - SEQ: Sequence number (offset)
-/// - UID: Unique TCP session identifier
-/// - DOMAIN: Target domain name
-///
-/// EOF Query:
-/// ```text
-/// EOF.[LAST_SEQ].[UID].[DOMAIN]
-/// ```
-/// - LAST_SEQ: Last sequence number sent
+/// - MAXSEQ: Total number of data fragments
 /// - UID: Unique TCP session identifier
 /// - DOMAIN: Target domain name
 ///
@@ -173,7 +166,14 @@ pub fn send_tcp_data(
         .iter()
         .enumerate()
         .map(|(i, label)| {
-            let query = format!("{}.{}.{}.{}", label, i, session_id, domain);
+            let query = format!(
+                "{}.{}.{}.{}.{}",
+                label,
+                i,
+                data_b64.len() - 1,
+                session_id,
+                domain
+            );
             if query.len() > 254 {
                 panic!("DNS query too long: {} chars", query.len());
             }
@@ -181,22 +181,18 @@ pub fn send_tcp_data(
         })
         .collect();
 
-    // Generate EOF query with last sequence number
-    let eof_query = format!("EOF.{}.{}.{}", data_b64.len() - 1, session_id, domain);
-
-    // Send each query asynchrously
+    // TODO ; Make the requests in parallel
     for query in queries {
-        // Send synchronously instead since resolver can't be moved into threads
-        if let Err(e) = send_req(query, resolver) {
-            eprintln!("Error sending request: {}", e);
-            return Err("Failed to send DNS request".into());
+        loop {
+            match send_req(query.clone(), resolver) {
+                Ok(_) => break, // Success, move to next query
+                Err(e) => {
+                    eprintln!("Error sending request: {}, retrying...", e);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+            }
         }
-    }
-
-    // Send EOF query
-    if let Err(e) = send_req(eof_query, resolver) {
-        eprintln!("Error sending EOF request: {}", e);
-        return Err("Failed to send EOF request".into());
     }
 
     Ok(())
