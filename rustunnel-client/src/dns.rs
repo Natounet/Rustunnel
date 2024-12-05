@@ -1,9 +1,7 @@
-pub mod utils;
-
 use crate::utils::*;
+use hickory_resolver::config::*;
+use hickory_resolver::Resolver;
 use regex::Regex;
-use trust_dns_resolver::config::*;
-use trust_dns_resolver::Resolver;
 
 pub fn get_resolver() -> Resolver {
     Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap()
@@ -81,7 +79,7 @@ pub fn create_tcp_session(
     todo!("TODO: implement query");
 
     // Make the DNS lookup
-    let response = match resolver.lookup(query, trust_dns_resolver::proto::rr::RecordType::TXT) {
+    let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
         Ok(response) => response,
         Err(e) => return Err(Box::new(e)),
     };
@@ -102,6 +100,7 @@ pub fn create_tcp_session(
         Err("No response received".into())
     }
 }
+
 pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn std::error::Error>> {
     // Check if query is valid FQDN
     if !is_valid_fqdn(&query) {
@@ -112,7 +111,7 @@ pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn st
     println!("Sending query: {}", query);
 
     // Make the DNS lookup
-    let response = match resolver.lookup(query, trust_dns_resolver::proto::rr::RecordType::TXT) {
+    let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
         Ok(response) => response,
         Err(e) => return Err(Box::new(e)),
     };
@@ -126,4 +125,79 @@ pub fn send_req(query: String, resolver: &Resolver) -> Result<String, Box<dyn st
     } else {
         Err("No response received".into())
     }
+}
+
+/// Sends TCP data through DNS tunneling by encoding it in DNS queries
+///
+/// # Format
+///
+/// Data Query:
+/// ```text
+/// [DATA_B64].[SEQ].[UID].[DOMAIN]
+/// ```
+/// - DATA_B64: Base32 encoded data fragment
+/// - SEQ: Sequence number (offset)
+/// - UID: Unique TCP session identifier
+/// - DOMAIN: Target domain name
+///
+/// EOF Query:
+/// ```text
+/// EOF.[LAST_SEQ].[UID].[DOMAIN]
+/// ```
+/// - LAST_SEQ: Last sequence number sent
+/// - UID: Unique TCP session identifier
+/// - DOMAIN: Target domain name
+///
+/// # Arguments
+///
+/// * `session_id` - Unique identifier for the TCP session
+/// * `tcp_bytes` - Raw TCP data to be sent
+/// * `domain` - Target domain name for DNS tunneling
+///
+/// # Panics
+///
+/// Will panic if any generated DNS query exceeds 254 characters
+pub fn send_tcp_data(
+    session_id: u16,
+    tcp_bytes: &[u8],
+    domain: &str,
+    resolver: &Resolver,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Split TCP data into chunks and encode as base32
+    let data_chunks = split_data_into_label_chunks(tcp_bytes);
+    let data_b64 = encode_base32(data_chunks);
+
+    // TODO : For the moment, only one label is used per query
+    // Generate DNS queries for each data chunk
+    let queries: Vec<String> = data_b64
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let query = format!("{}.{}.{}.{}", label, i, session_id, domain);
+            if query.len() > 254 {
+                panic!("DNS query too long: {} chars", query.len());
+            }
+            query
+        })
+        .collect();
+
+    // Generate EOF query with last sequence number
+    let eof_query = format!("EOF.{}.{}.{}", data_b64.len() - 1, session_id, domain);
+
+    // Send each query asynchrously
+    for query in queries {
+        // Send synchronously instead since resolver can't be moved into threads
+        if let Err(e) = send_req(query, resolver) {
+            eprintln!("Error sending request: {}", e);
+            return Err("Failed to send DNS request".into());
+        }
+    }
+
+    // Send EOF query
+    if let Err(e) = send_req(eof_query, resolver) {
+        eprintln!("Error sending EOF request: {}", e);
+        return Err("Failed to send EOF request".into());
+    }
+
+    Ok(())
 }
