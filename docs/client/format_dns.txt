@@ -7,9 +7,9 @@ Ce document décrit le format des requêtes et des réponses DNS utilisées dans
 ## 1. Ouverture de session
 ### Requête (client → serveur)
 ```
-CREATE.[HOST_B64].[PORT].[DOMAIN]
+CREATE.[HOST_B32].[PORT].[DOMAIN]
 ```
-- **HOST_B64** : Hôte cible encodé en Base64.
+- **HOST_B32** : Hôte cible encodé en Base32.
 - **PORT** : Port cible.
 - **DOMAIN** : Domaine utilisé pour le tunneling.
 
@@ -25,60 +25,24 @@ UID|-1 ( FAIL)
 ## 2. Transmission de données
 ### Requête (client → serveur)
 ```
-[DATA_B64].[NB].[UID].[DOMAIN]
+[DATA_B32].[SEQ].[MAXSEQ].[UID].[DOMAIN]
 ```
-- **DATA_B64** : Données fragmentées encodées en Base64.
-- **NB** : Numéro de séquence ou offset.
+- **DATA_B32** : Données fragmentées encodées en Base3.
+- **SEQ** : Numéro de séquence ou offset.
+- **MAXDEQ** : Numéro du dernier fragment
 - **UID** : Identifiant unique de la session TCP.
 
-### Paquet de fin de transmission (EOF)
-```
-EOF.[NB].[UID].[DOMAIN]
-```
-- **NB** : Dernier numéro de fragment envoyé.
-- **UID** : Identifiant unique de la session TCP.
-
-### Réponse (serveur → client)
-Pour chaque fragment :
-```
-NB|ACK
-```
-- **NB** : Numéro de séquence confirmé.
-- **ACK** : Confirmation de réception du fragment.
-
-Pour EOF :
-```
-EOF|SUCCESS
-EOF|MISSING.[NB1,NB2,...]
-```
-- **SUCCESS** : Tous les fragments ont été reçus.
-- **MISSING** : Liste des fragments manquants.
 
 ---
 
-## 3. Demande de réponse
-### Requête initiale (client → serveur)
-```
-RESP.[UID].[DOMAIN]
-```
 
-### Réponse initiale (serveur → client)
-```
-TOTAL.[NB_FRAGMENTS].[UID].[DOMAIN]
-```
-- **NB_FRAGMENTS** : Nombre total de fragments de la réponse.
 
-### Requête pour un fragment spécifique (client → serveur)
+### Réponses (serveur → client)
 ```
-RESP.[NB].[UID].[DOMAIN]
+BASE32|EOL
 ```
-
-### Réponse (serveur → client)
-```
-[DATA_B64].[NB].[UID].[DOMAIN]
-```
-- **DATA_B64** : Fragment de la réponse encodé en Base64.
-- **NB** : Numéro du fragment.
+- **BASE32** : Donnée TCP encodée
+- **EOL** : Plus de données.
 
 ---
 
