@@ -1,8 +1,8 @@
+use hickory_resolver::config::*;
+use hickory_resolver::TokioAsyncResolver;
 use std::io::{Error as IoError, ErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use trust_dns_resolver::config::*;
-use trust_dns_resolver::AsyncResolver;
 
 /// SOCKS5 protocol-specific error enumeration
 ///
@@ -50,26 +50,15 @@ impl From<IoError> for Socks5Error {
 /// # Errors
 ///
 /// Returns `Socks5Error::DomainLookupFailed` if resolution fails
-async fn resolve_domain_to_ip(domain: &str) -> Result<String, Socks5Error> {
-    // Create DNS resolver with default configuration
-    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-        .map_err(|_| Socks5Error::DomainLookupFailed)?;
+async fn resolve_domain_to_ip(domain: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Créer le resolver directement de manière asynchrone
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
-    // Perform DNS lookup for the domain
-    let response = resolver
-        .lookup_ip(domain)
-        .await
-        .map_err(|_| Socks5Error::DomainLookupFailed)?;
+    // Utiliser le resolver
+    let response = resolver.lookup_ip(domain).await?;
+    let addr = response.iter().next().ok_or("No IP addresses found")?;
 
-    // Return the first resolved IP address
-    response
-        .iter()
-        .next()
-        .map(|ip| ip.to_string())
-        .ok_or_else(|| {
-            eprintln!("[ERROR] No IP addresses found for domain: {}", domain);
-            Socks5Error::DomainLookupFailed
-        })
+    Ok(addr.to_string())
 }
 
 /// Establishes a TCP connection to a target service
