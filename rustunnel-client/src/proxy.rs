@@ -4,39 +4,6 @@ use std::io::{Error as IoError, ErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-/// SOCKS5 protocol-specific error enumeration
-///
-/// Manages different error types that can occur during SOCKS5 proxy connection establishment
-#[derive(Debug)]
-enum Socks5Error {
-    /// Invalid request format
-    InvalidFormat,
-
-    /// No acceptable authentication methods found
-    NoAcceptableMethods,
-
-    /// Input/Output related errors
-    IoError(()),
-
-    /// Domain name resolution failed
-    DomainLookupFailed,
-}
-
-/// Converts IoError to Socks5Error for unified error handling
-///
-/// # Arguments
-///
-/// * `e` - The input/output error to convert
-///
-/// # Returns
-///
-/// A corresponding SOCKS5 error
-impl From<IoError> for Socks5Error {
-    fn from(_e: IoError) -> Self {
-        Socks5Error::IoError(())
-    }
-}
-
 /// Resolves a domain name to its IP address
 ///
 /// # Arguments
@@ -50,12 +17,15 @@ impl From<IoError> for Socks5Error {
 /// # Errors
 ///
 /// Returns `Socks5Error::DomainLookupFailed` if resolution fails
-async fn resolve_domain_to_ip(domain: &str) -> Result<String, Box<dyn std::error::Error>> {
+async fn resolve_domain_to_ip(domain: &str) -> Result<String, String> {
     // Créer le resolver directement de manière asynchrone
     let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
     // Utiliser le resolver
-    let response = resolver.lookup_ip(domain).await?;
+    let response = match resolver.lookup_ip(domain).await {
+        Ok(result) => result,
+        Err(e) => return Err(e.to_string()),
+    };
     let addr = response
         .iter()
         .next()
@@ -133,7 +103,7 @@ async fn proxy_bidirectional(
             result = client_read.read(&mut buffer_client) => {
                 match result? {
                     0 => {
-                        println!("[INFO]The client closed the connection.");
+                        println!("[INFO] The client closed the connection.");
                         break;
                     }
                     n => {
@@ -182,34 +152,42 @@ async fn proxy_bidirectional(
 /// # Errors
 ///
 /// Possible errors include invalid format or no acceptable methods
-async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), Socks5Error> {
+async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), String> {
     let mut buf = [0; 1024];
 
     // Read client's method selection message
-    let n = socket.read(&mut buf).await?;
+    let n = match socket.read(&mut buf).await {
+        Ok(n) => n,
+        Err(e) => return Err(e.to_string()),
+    };
 
     // Validate SOCKS5 version
     if n < 2 || buf[0] != 0x05 {
-        return Err(Socks5Error::InvalidFormat);
+        return Err("ERROR : Invalid SOCKS5 format".to_string());
     }
 
     // Check number of authentication methods
     let auth_count = buf[1] as usize;
     if n < 2 + auth_count {
-        return Err(Socks5Error::InvalidFormat);
+        return Err("ERROR : Invalid SOCKS5 request format".to_string());
     }
 
     // Check for no authentication method (0x00)
     let auth_methods = &buf[2..2 + auth_count];
     if !auth_methods.contains(&0x00) {
         // Respond with "No acceptable methods"
-        socket.write_all(&[0x05, 0xFF]).await?;
-        return Err(Socks5Error::NoAcceptableMethods);
+        match socket.write_all(&[0x05, 0xFF]).await {
+            Ok(_) => (),
+            Err(e) => return Err(e.to_string()),
+        };
+        return Err("ERROR : No acceptable methods".to_string());
     }
 
     // Respond with successful no-authentication method
-    socket.write_all(&[0x05, 0x00]).await?;
-    Ok(())
+    match socket.write_all(&[0x05, 0x00]).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Handles the client's TCP connection request
