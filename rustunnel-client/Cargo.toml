@@ -1,12 +1,16 @@
 [package]
-name = "rustunnel-client"
+name = "rustunnel_client"
 version = "0.1.0"
 edition = "2021"
+
 
 [[bin]]
 name = "proxy"
 path = "src/proxy.rs"
 
+[lib]
+name = "rustunnel_client"
+path = "src/lib.rs"
 
 [dependencies]
 tokio = { version = "1.41.1", features = ["full"] }
