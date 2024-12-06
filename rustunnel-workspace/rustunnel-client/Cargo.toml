@@ -1,0 +1,25 @@
+[package]
+name = "rustunnel_client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[[bin]]
+name = "proxy"
+path = "src/proxy.rs"
+
+
+[dependencies]
+tokio = { version = "1.41.1", features = ["full"] }
+hickory-resolver = "0.24.1"
+rustunnel-lib = { path = "../rustunnel-lib" }
+
+
+[profile.release]
+lto = true        # Optimisation max
+debug = false
+opt-level = "z"   # Optimisation pour la taille
+codegen-units = 1
