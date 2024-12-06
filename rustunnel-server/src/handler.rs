@@ -1,6 +1,7 @@
 use crate::{
+    dns,
     options::{self, Options},
-    utils,
+    utils::{self, decode_base32},
 };
 
 use hickory_server::{
@@ -21,6 +22,8 @@ use std::{
     },
 };
 
+use std::{collections::HashMap, net::TcpStream, sync::Mutex};
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Invalid OpCode {0:}")]
@@ -38,6 +41,15 @@ pub enum Error {
 pub struct Handler {
     pub root_zone: LowerName,
     pub test_zone: LowerName,
+
+    // Hashmap pour stocker les sockets ouverts
+    pub sockets: Arc<Mutex<HashMap<u16, TcpStream>>>,
+
+    // Vecteur pour stocker les fragments TCP reçus
+    pub request_fragments: Arc<Mutex<HashMap<u16, Vec<u8>>>>,
+
+    // File des fragments TCP de réponse
+    pub response_fragments: Arc<Mutex<HashMap<u16, Vec<u8>>>>,
 }
 
 impl Handler {
@@ -51,6 +63,15 @@ impl Handler {
             test_zone: LowerName::from(
                 Name::from_str(format!("test.{}", domain).as_str()).unwrap(),
             ),
+
+            // Initialisation de la hashmap pour les sockets
+            sockets: Arc::new(Mutex::new(HashMap::new())),
+
+            // Initialisation de la hashmap pour les fragments
+            request_fragments: Arc::new(Mutex::new(HashMap::new())),
+
+            // Initialisation de la hashmap pour les fragments de réponse
+            response_fragments: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -124,13 +145,59 @@ impl Handler {
         let mut header = Header::response_from_request(request.header());
         header.set_authoritative(true);
 
+        // Requête de forme
+        // CREATE.[HOST_B32].[PORT].[DOMAIN]
+        // HOST_B32 : base32 encoded host IPv4 address
+
+        // Récupère les parties de la requête
+        let parts: Vec<String> = request
+            .query()
+            .name()
+            .to_string()
+            .split('.')
+            .map(|s| s.to_string())
+            .collect();
+
+        let _host: String =
+            match String::from_utf8(decode_base32(vec![parts[1].clone()])[0].clone()) {
+                Ok(h) => h,
+                Err(_) => {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid host",
+                    )))
+                }
+            };
+
+        let port: u16 = match parts[2].parse() {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid port",
+                )))
+            }
+        };
+
+        // Trying to open a socket
+        let socket = match TcpStream::connect(format!("{}:{}", _host, port)) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    e.to_string(),
+                )))
+            }
+        };
+
         // Génère un UID
         let session_id = utils::generate_u16_uuid();
 
+        // Stocke le socket dans la hashmap
+        self.sockets.lock().unwrap().insert(session_id, socket);
+
         // Crée l'enregistrement TXT avec la chaîne construite
         let rdata = RData::TXT(TXT::new(vec![session_id.to_string()]));
-
-        todo!("Implémenter l'ouverture de socket avant retour de l'ID");
 
         // Crée la liste des enregistrements avec une TTL de 60 secondes
         let records = vec![Record::from_rdata(request.query().name().into(), 1, rdata)];

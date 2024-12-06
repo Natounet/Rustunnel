@@ -1,7 +1,7 @@
+mod dns;
 mod handler;
 mod options;
 mod utils;
-
 use clap::Parser;
 use handler::Handler;
 use hickory_server::ServerFuture;
