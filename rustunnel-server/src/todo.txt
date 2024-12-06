@@ -1,0 +1,80 @@
+Handler:
+    Il faut mettre en place un stockage partagé pour les sockets ouverts, et pour les données reçues
+    - CREATE
+        - Implémenter l'ouveture de socket
+        - Stocker le socket avec l'UID
+    - DATA
+    - RESPONSE
+
+
+Idées de structure partagée :
+
+use std::sync::{Arc, Mutex};
+
+/// Structure partagée pour stocker les tableaux de données
+#[derive(Debug)]
+pub struct SharedData {
+    /// Le tableau contenant les données décodées
+    data: Vec<Option<Vec<u8>>>, // Chaque élément peut être Some(données) ou None si vide
+}
+
+impl SharedData {
+    /// Crée une nouvelle instance avec un tableau de taille `seq_max`
+    pub fn new(seq_max: usize) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
+            data: vec![None; seq_max], // Initialise le tableau avec `None`
+        }))
+    }
+
+    /// Ajoute des données décodées à la position `seq`
+    pub fn insert(&mut self, seq: usize, decoded_data: Vec<u8>) {
+        if seq < self.data.len() {
+            self.data[seq] = Some(decoded_data);
+        } else {
+            eprintln!("Index seq={} est hors limites (taille={})", seq, self.data.len());
+        }
+    }
+
+    /// Récupère les données à la position `seq`
+    pub fn get(&self, seq: usize) -> Option<&Vec<u8>> {
+        self.data.get(seq).and_then(|opt| opt.as_ref())
+    }
+}
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::net::TcpStream; // Ou le type de socket que vous utilisez
+
+type UID = u64; // Définissez votre type UID ici
+type Socket = TcpStream; // Remplacez TcpStream par votre type de socket si nécessaire
+
+#[derive(Debug)]
+pub struct SharedSocketMap {
+    sockets: Arc<Mutex<HashMap<UID, Socket>>>,
+}
+
+impl SharedSocketMap {
+    /// Crée une nouvelle instance vide de la HashMap partagée
+    pub fn new() -> Self {
+        SharedSocketMap {
+            sockets: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Ajoute un socket à la structure
+    pub fn insert(&self, uid: UID, socket: Socket) {
+        let mut sockets = self.sockets.lock().unwrap();
+        sockets.insert(uid, socket);
+    }
+
+    /// Supprime un socket basé sur le UID
+    pub fn remove(&self, uid: &UID) -> Option<Socket> {
+        let mut sockets = self.sockets.lock().unwrap();
+        sockets.remove(uid)
+    }
+
+    /// Récupère un socket basé sur le UID
+    pub fn get(&self, uid: &UID) -> Option<Socket> {
+        let sockets = self.sockets.lock().unwrap();
+        sockets.get(uid).cloned() // Retourne une copie (si nécessaire)
+    }
+}
