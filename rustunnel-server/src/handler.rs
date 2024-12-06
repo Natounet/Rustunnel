@@ -128,7 +128,12 @@ impl Handler {
 
         // Construit la réponse finale
         let response = builder.build(header, records.iter(), &[], &[], &[]);
-
+        println!("==================== INFO =================");
+        println!("Number of sockets: {}", self.sockets.lock().unwrap().len());
+        println!(
+            "Sockets uids: {:?}",
+            self.sockets.lock().unwrap().keys().collect::<Vec<&u16>>()
+        );
         // Envoie la réponse
         Ok(responder.send_response(response).await?)
     }
@@ -179,14 +184,17 @@ impl Handler {
             }
         };
 
+        println!("INFO : Trying to open a socket to {}:{}", _host, port);
+
         // Trying to open a socket
         let socket = match TcpStream::connect(format!("{}:{}", _host, port)) {
             Ok(s) => s,
             Err(e) => {
+                println!("ERROR: Socket creation to {}:{} failed", _host, port);
                 return Err(Error::Io(std::io::Error::new(
                     std::io::ErrorKind::ConnectionRefused,
                     e.to_string(),
-                )))
+                )));
             }
         };
 
@@ -204,6 +212,8 @@ impl Handler {
 
         // Construit la réponse finale
         let response = builder.build(header, records.iter(), &[], &[], &[]);
+
+        println!("INFO : Socket created for session ID : {}", session_id);
 
         // Envoie la réponse
         Ok(responder.send_response(response).await?)
