@@ -1,3 +1,0 @@
-DNS - SEND_TCP_DATA
-    - Multiple labels per query
-    - Parallel queries

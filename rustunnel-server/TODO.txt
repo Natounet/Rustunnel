@@ -1,7 +1,0 @@
-DNS - SEND_TCP_DATA
-    - Multiple labels per query
-    - Parallel queries
-
-
-
-!!!! Faire en sorte de retirer les duplicats de utils/dns entre les deux projets !!!!
