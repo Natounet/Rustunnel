@@ -40,8 +40,8 @@ pub fn decode_base32(labels: Vec<String>) -> Vec<Vec<u8>> {
     labels
         .into_iter()
         .map(|label| {
-            base32_decode(Alphabet::Rfc4648 { padding: false }, &label)
-                .expect("Failed to decode base32 label")
+            base32_decode(Alphabet::Rfc4648 { padding: false }, &label.to_uppercase())
+                .unwrap_or_else(|| panic!("Failed to decode base32 label: {}", label))
         })
         .collect()
 }
