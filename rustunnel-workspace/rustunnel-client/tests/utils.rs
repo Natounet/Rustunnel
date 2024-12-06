@@ -1,4 +1,4 @@
-use rustunnel_client::utils::*;
+use rustunnel_lib::utils::*;
 
 #[cfg(test)]
 mod tests {

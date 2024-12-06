@@ -16,6 +16,7 @@ path = "src/proxy.rs"
 tokio = { version = "1.41.1", features = ["full"] }
 hickory-resolver = "0.24.1"
 rustunnel-lib = { path = "../rustunnel-lib" }
+rand = "0.8.5"
 
 
 [profile.release]
