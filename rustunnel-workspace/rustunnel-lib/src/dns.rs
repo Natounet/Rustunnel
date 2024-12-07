@@ -1,10 +1,23 @@
 use crate::utils::*;
 use hickory_resolver::config::*;
-use hickory_resolver::Resolver;
+use hickory_resolver::TokioAsyncResolver;
 use regex::Regex;
 
-pub fn get_resolver() -> Resolver {
-    Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap()
+pub fn get_resolver() -> TokioAsyncResolver {
+    TokioAsyncResolver::tokio(
+        ResolverConfig::from_parts(
+            None,
+            vec![],
+            vec![NameServerConfig {
+                socket_addr: "127.0.0.1:1053".parse().unwrap(),
+                protocol: Protocol::Udp,
+                tls_dns_name: None,
+                trust_negative_responses: false,
+                bind_addr: None,
+            }],
+        ),
+        ResolverOpts::default(),
+    )
 }
 
 pub fn is_valid_fqdn(domain: &str) -> bool {
@@ -50,12 +63,15 @@ pub fn verify_host(host: &str) -> bool {
     is_valid_fqdn(host)
 }
 
-pub fn create_tcp_session(
+pub async fn create_tcp_session(
     host: &str,
     port: u16,
     domain: &str,
-    resolver: &Resolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<u16, String> {
+    println!("Host: {}", host);
+    println!("Port: {}", port);
+    println!("Domain: {}", domain);
     // Validate host
     if !verify_host(host) {
         return Err("Invalid host".into());
@@ -78,7 +94,10 @@ pub fn create_tcp_session(
     println!("Query: {}", query);
 
     // Make the DNS lookup
-    let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
+    let response = match resolver
+        .lookup(query, hickory_resolver::proto::rr::RecordType::TXT)
+        .await
+    {
         Ok(response) => response,
         Err(_) => return Err(format!("ERROR : Failed to resolve the domain : {}", domain)),
     };
@@ -100,9 +119,9 @@ pub fn create_tcp_session(
     }
 }
 
-pub fn send_request(
+pub async fn send_request(
     query: &String,
-    resolver: &Resolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Check if query is valid FQDN
     if !is_valid_fqdn(&query) {
@@ -111,7 +130,10 @@ pub fn send_request(
     }
     println!("Sending query: {}", query);
     // Make the DNS lookup
-    let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
+    let response = match resolver
+        .lookup(query, hickory_resolver::proto::rr::RecordType::TXT)
+        .await
+    {
         Ok(response) => response,
         Err(e) => return Err(Box::new(e)),
     };
@@ -147,11 +169,11 @@ pub fn send_request(
 /// # Panics
 ///
 /// Will panic if any generated DNS query exceeds 254 characters
-pub fn send_tcp_data(
+pub async fn send_tcp_data(
     session_id: u16,
     tcp_bytes: &[u8],
     domain: &str,
-    resolver: &Resolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<(), String> {
     // Split TCP data into chunks and encode as base32
     let data_chunks = split_data_into_label_chunks(tcp_bytes);
@@ -163,7 +185,7 @@ pub fn send_tcp_data(
         .enumerate()
         .map(|(i, label)| {
             let query = format!(
-                "{}.{}.{}.{}.{}",
+                "data.{}.{}.{}.{}.{}",
                 label,
                 i,
                 data_b64.len(),
@@ -180,7 +202,7 @@ pub fn send_tcp_data(
     for query in queries {
         let mut timeout = 0;
         loop {
-            match send_request(&query, resolver) {
+            match send_request(&query, resolver).await {
                 Ok(_) => break, // Success, move to next query
                 Err(e) => {
                     if timeout >= 10 {
@@ -199,16 +221,16 @@ pub fn send_tcp_data(
 /// Retrieve the response data from the server
 /// Query :RESPONSE.UID.DOMAIN
 /// Response : Base32 encoded data or EOF
-pub fn retrieve_response(
+pub async fn retrieve_response(
     session_id: u16,
     domain: &str,
-    resolver: &Resolver,
+    resolver: &TokioAsyncResolver,
 ) -> Result<Vec<u8>, String> {
     let mut b32_encoded_fragments: Vec<String> = vec![];
     let query: String = format!("RESPONSE.{}.{}", session_id, domain);
     loop {
         let i: usize = 0;
-        match send_request(&query, resolver) {
+        match send_request(&query, resolver).await {
             Ok(response) => match response {
                 ref eol if eol == "EOL" => break,
                 b32_content => b32_encoded_fragments.push(b32_content),
