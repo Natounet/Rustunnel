@@ -1,9 +1,6 @@
-use rustunnel_lib::{
-    dns,
-    utils::{self, decode_base32},
-};
+use rustunnel_lib::utils::{self, decode_base32};
 
-use crate::options::{self, Options};
+use crate::options::Options;
 
 use hickory_server::{
     authority::MessageResponseBuilder,
@@ -13,15 +10,7 @@ use hickory_server::{
 
 use hickory_proto::rr::{rdata::TXT, LowerName, Name, RData, Record};
 
-use std::{
-    borrow::Borrow,
-    net::IpAddr,
-    str::FromStr,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::{str::FromStr, sync::Arc};
 
 use std::{collections::HashMap, net::TcpStream, sync::Mutex};
 
@@ -47,10 +36,10 @@ pub struct Handler {
     pub sockets: Arc<Mutex<HashMap<u16, TcpStream>>>,
 
     // Vecteur pour stocker les fragments TCP reçus
-    pub request_fragments: Arc<Mutex<HashMap<u16, Vec<u8>>>>,
+    pub request_fragments: Arc<Mutex<HashMap<u16, Vec<Vec<u8>>>>>,
 
     // File des fragments TCP de réponse
-    pub response_fragments: Arc<Mutex<HashMap<u16, Vec<u8>>>>,
+    pub response_fragments: Arc<Mutex<HashMap<u16, String>>>,
 }
 
 impl Handler {
@@ -93,10 +82,10 @@ impl Handler {
 
         match request.query().name() {
             name if self.test_zone.zone_of(name) => {
-                self.do_handle_request_hello(request, response).await
+                self.do_handle_request_test(request, response).await
             }
             name if name.to_string().starts_with("data.") => {
-                todo!("Implémenter le handle pour les données")
+                self.do_handle_request_data(request, response).await
             }
             name if name.to_string().starts_with("create.") => {
                 self.do_handle_request_create(request, response).await
@@ -109,7 +98,7 @@ impl Handler {
     }
 
     /// Handle requests for *.hello.{domain}.
-    async fn do_handle_request_hello<R: ResponseHandler>(
+    async fn do_handle_request_test<R: ResponseHandler>(
         &self,
         request: &Request,
         mut responder: R,
@@ -122,10 +111,10 @@ impl Handler {
         header.set_authoritative(true);
 
         // Crée l'enregistrement TXT avec la chaîne construite
-        let rdata = RData::TXT(TXT::new(vec![String::from("Success !")]));
+        let rdata = RData::TXT(TXT::new(vec![String::from("OK")]));
 
         // Crée la liste des enregistrements avec une TTL de 60 secondes
-        let records = vec![Record::from_rdata(request.query().name().into(), 1, rdata)];
+        let records = vec![Record::from_rdata(request.query().name().into(), 0, rdata)];
 
         // Construit la réponse finale
         let response = builder.build(header, records.iter(), &[], &[], &[]);
@@ -135,10 +124,17 @@ impl Handler {
             "Sockets uids: {:?}",
             self.sockets.lock().unwrap().keys().collect::<Vec<&u16>>()
         );
+        println!(
+            "Request fragments for all uids: {:?}",
+            self.request_fragments.lock().unwrap()
+        );
+        println!(
+            "Response fragments for all uids: {:?}",
+            self.response_fragments.lock().unwrap()
+        );
         // Envoie la réponse
         Ok(responder.send_response(response).await?)
     }
-    // Handle requests for *.hello.{domain}.
     async fn do_handle_request_create<R: ResponseHandler>(
         &self,
         request: &Request,
@@ -155,6 +151,8 @@ impl Handler {
         // CREATE.[HOST_B32].[PORT].[DOMAIN]
         // HOST_B32 : base32 encoded host IPv4 address
 
+        let mut message = String::from("-1");
+
         // Récupère les parties de la requête
         let parts: Vec<String> = request
             .query()
@@ -164,57 +162,165 @@ impl Handler {
             .map(|s| s.to_string())
             .collect();
 
-        let _host: String =
-            match String::from_utf8(decode_base32(vec![parts[1].clone()])[0].clone()) {
-                Ok(h) => h,
-                Err(_) => {
-                    return Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Invalid host",
-                    )))
-                }
-            };
+        let _host = match String::from_utf8(decode_base32(vec![parts[1].clone()])[0].clone()) {
+            Ok(h) => h,
+            Err(_) => String::new(),
+        };
 
         let port: u16 = match parts[2].parse() {
             Ok(p) => p,
-            Err(_) => {
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid port",
-                )))
-            }
+            Err(_) => 0,
         };
 
-        println!("INFO : Trying to open a socket to {}:{}", _host, port);
+        if !_host.is_empty() && port != 0 {
+            println!("INFO : Trying to open a socket to {}:{}", _host, port);
 
-        // Trying to open a socket
-        let socket = match TcpStream::connect(format!("{}:{}", _host, port)) {
-            Ok(s) => s,
-            Err(e) => {
+            // Trying to open a socket
+            if let Ok(socket) = TcpStream::connect(format!("{}:{}", _host, port)) {
+                // Génère un UID
+                let session_id = utils::generate_u16_uuid();
+
+                // Stocke le socket dans la hashmap
+                self.sockets.lock().unwrap().insert(session_id, socket);
+
+                message = session_id.to_string();
+
+                println!("INFO : Socket created for session ID : {}", session_id);
+            } else {
                 println!("ERROR: Socket creation to {}:{} failed", _host, port);
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionRefused,
-                    e.to_string(),
-                )));
             }
-        };
-
-        // Génère un UID
-        let session_id = utils::generate_u16_uuid();
-
-        // Stocke le socket dans la hashmap
-        self.sockets.lock().unwrap().insert(session_id, socket);
+        }
 
         // Crée l'enregistrement TXT avec la chaîne construite
-        let rdata = RData::TXT(TXT::new(vec![session_id.to_string()]));
+        let rdata = RData::TXT(TXT::new(vec![message.to_string()]));
 
         // Crée la liste des enregistrements avec une TTL de 60 secondes
-        let records = vec![Record::from_rdata(request.query().name().into(), 1, rdata)];
+        let records = vec![Record::from_rdata(request.query().name().into(), 0, rdata)];
 
         // Construit la réponse finale
         let response = builder.build(header, records.iter(), &[], &[], &[]);
 
-        println!("INFO : Socket created for session ID : {}", session_id);
+        // Envoie la réponse
+        Ok(responder.send_response(response).await?)
+    }
+
+    /// Handle requests for *.hello.{domain}.
+    async fn do_handle_request_data<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        mut responder: R,
+    ) -> Result<ResponseInfo, Error> {
+        // Crée un constructeur de réponse à partir de la requête
+        let builder = MessageResponseBuilder::from_message_request(request);
+
+        // Prépare l'en-tête de la réponse
+        let mut header = Header::response_from_request(request.header());
+        header.set_authoritative(true);
+
+        let mut message = String::from("OK");
+
+        // DATA.[DATA_B32].[SEQ].[MAXSEQ].[UID].[DOMAIN]
+        println!(
+            "Data request received: {}",
+            request.query().name().to_string()
+        );
+        let parts: Vec<String> = request
+            .query()
+            .name()
+            .to_string()
+            .split('.')
+            .map(|s| s.to_string())
+            .collect();
+
+        let uid: u16 = match parts[4].parse() {
+            Ok(p) => {
+                if !self.sockets.lock().unwrap().contains_key(&p) {
+                    eprintln!("Uid does not exist in sockets");
+                    message = String::from("Uid does not exist in sockets");
+                }
+                p
+            }
+            Err(_) => {
+                eprintln!("Invalid uid received");
+                message = String::from("Invalid uid");
+                0
+            }
+        };
+
+        let _data = decode_base32(vec![parts[1].clone()])[0].clone();
+
+        let maxseq: u16 = match parts[3].parse() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("Invalid max sequence number received");
+                message = String::from("Invalid max sequence number");
+                0
+            }
+        };
+
+        let seq: u16 = match parts[2].parse() {
+            Ok(p) => {
+                if p >= maxseq {
+                    message = String::from("Sequence number greater than or equal to max sequence");
+                }
+                p
+            }
+            Err(_) => {
+                eprintln!("Invalid sequence number received");
+                message = String::from("Invalid sequence number");
+                0
+            }
+        };
+
+        if message == "OK" {
+            // Préparation de la structure de donnée dans le cas où ce n'est pas encore fait
+            if !self.request_fragments.lock().unwrap().contains_key(&uid)
+                || self
+                    .request_fragments
+                    .lock()
+                    .unwrap()
+                    .get(&uid)
+                    .unwrap()
+                    .is_empty()
+            {
+                // Instantialisation de seqmax vecteurs
+                let mut fragments = Vec::with_capacity(usize::from(maxseq));
+                fragments.resize(usize::from(maxseq), Vec::new());
+                self.request_fragments
+                    .lock()
+                    .unwrap()
+                    .insert(uid, fragments);
+            }
+
+            // Ajout des données dans la bonne case
+            self.request_fragments
+                .lock()
+                .unwrap()
+                .get_mut(&uid)
+                .unwrap()[usize::from(seq)] = _data;
+
+            // Check il all usize vec are not empty
+            let mut request_complete = true;
+            for fragment in self.request_fragments.lock().unwrap().get(&uid).unwrap() {
+                if fragment.is_empty() {
+                    request_complete = false;
+                    break;
+                }
+            }
+
+            if request_complete {
+                todo!("Redirigé à la fonction de transfert")
+            }
+        }
+
+        // Crée l'enregistrement TXT avec la chaîne construite
+        let rdata = RData::TXT(TXT::new(vec![message]));
+
+        // Crée la liste des enregistrements avec une TTL de 60 secondes
+        let records = vec![Record::from_rdata(request.query().name().into(), 0, rdata)];
+
+        // Construit la réponse finale
+        let response = builder.build(header, records.iter(), &[], &[], &[]);
 
         // Envoie la réponse
         Ok(responder.send_response(response).await?)
