@@ -25,19 +25,20 @@ UID|-1 ( FAIL)
 ## 2. Transmission de données
 ### Requête (client → serveur)
 ```
-[DATA_B32].[SEQ].[MAXSEQ].[UID].[DOMAIN]
+DATA.[DATA_B32].[SEQ].[MAXSEQ].[UID].[DOMAIN]
 ```
 - **DATA_B32** : Données fragmentées encodées en Base3.
 - **SEQ** : Numéro de séquence ou offset.
 - **MAXDEQ** : Numéro du dernier fragment
 - **UID** : Identifiant unique de la session TCP.
 
+Reponse : "OK" ou une erreur
 
 ---
 
 
 
-### Réponses (serveur → client)
+### 3. Réponses (serveur → client)
 ```
 BASE32|EOL
 ```
