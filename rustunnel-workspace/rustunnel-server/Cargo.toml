@@ -13,3 +13,4 @@ hickory-resolver = "0.24.1"
 thiserror = "2.0.4"
 anyhow = "1.0.94"
 rustunnel-lib = { path = "../rustunnel-lib" }
+base32 = "0.5.1"
