@@ -99,3 +99,134 @@ pub fn create_tcp_session(
         Err("ERROR : No response received from the DNS server".into())
     }
 }
+
+pub fn send_request(
+    query: &String,
+    resolver: &Resolver,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Check if query is valid FQDN
+    if !is_valid_fqdn(&query) {
+        eprintln!("Invalid query: {}", query);
+        return Err("Invalid query".into());
+    }
+    println!("Sending query: {}", query);
+    // Make the DNS lookup
+    let response = match resolver.lookup(query, hickory_resolver::proto::rr::RecordType::TXT) {
+        Ok(response) => response,
+        Err(e) => return Err(Box::new(e)),
+    };
+    // Parse the response
+    if let Some(txt) = response.iter().next() {
+        let txt_string = txt.to_string();
+        let response_str = String::from_utf8_lossy(txt_string.as_bytes());
+        Ok(response_str.to_string())
+    } else {
+        Err("No response received".into())
+    }
+}
+/// Sends TCP data through DNS tunneling by encoding it in DNS queries
+///
+/// # Format
+///
+/// Data Query:
+/// ```text
+/// [DATA_B64].[SEQ].[MAXSEQ].[UID].[DOMAIN]
+/// ```
+/// - DATA_B64: Base32 encoded data fragment
+/// - SEQ: Sequence number (offset)
+/// - MAXSEQ: Total number of data fragments
+/// - UID: Unique TCP session identifier
+/// - DOMAIN: Target domain name
+///
+/// # Arguments
+///
+/// * `session_id` - Unique identifier for the TCP session
+/// * `tcp_bytes` - Raw TCP data to be sent
+/// * `domain` - Target domain name for DNS tunneling
+///
+/// # Panics
+///
+/// Will panic if any generated DNS query exceeds 254 characters
+pub fn send_tcp_data(
+    session_id: u16,
+    tcp_bytes: &[u8],
+    domain: &str,
+    resolver: &Resolver,
+) -> Result<(), String> {
+    // Split TCP data into chunks and encode as base32
+    let data_chunks = split_data_into_label_chunks(tcp_bytes);
+    let data_b64 = encode_base32(data_chunks);
+    // TODO : For the moment, only one label is used per query
+    // Generate DNS queries for each data chunk
+    let queries: Vec<String> = data_b64
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let query = format!(
+                "{}.{}.{}.{}.{}",
+                label,
+                i,
+                data_b64.len(),
+                session_id,
+                domain
+            );
+            if query.len() > 254 {
+                panic!("DNS query too long: {} chars", query.len());
+            }
+            query
+        })
+        .collect();
+    // TODO ; Make the requests in parallel
+    for query in queries {
+        let mut timeout = 0;
+        loop {
+            match send_request(&query, resolver) {
+                Ok(_) => break, // Success, move to next query
+                Err(e) => {
+                    if timeout >= 10 {
+                        return Err("ERROR : Failed to contact the DNS server for 10 times when trying to send the queries".to_string());
+                    }
+                    timeout += 1;
+                    eprintln!("Error sending request: {}, retrying...", e);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+/// Retrieve the response data from the server
+/// Query :RESPONSE.UID.DOMAIN
+/// Response : Base32 encoded data or EOF
+pub fn retrieve_response(
+    session_id: u16,
+    domain: &str,
+    resolver: &Resolver,
+) -> Result<Vec<u8>, String> {
+    let mut b32_encoded_fragments: Vec<String> = vec![];
+    let query: String = format!("RESPONSE.{}.{}", session_id, domain);
+    loop {
+        let i: usize = 0;
+        match send_request(&query, resolver) {
+            Ok(response) => match response {
+                ref eol if eol == "EOL" => break,
+                b32_content => b32_encoded_fragments.push(b32_content),
+            },
+            // Retry to contact the server 10 times
+            Err(_) => {
+                if i == 10 {
+                    break;
+                } else {
+                    return Err(
+                        "ERROR : Failed to contact the DNS server for 10 times when trying to get responses.".to_string()
+                    );
+                }
+            }
+        }
+    }
+    Ok(decode_base32(b32_encoded_fragments)
+        .into_iter()
+        .flatten()
+        .collect())
+}
