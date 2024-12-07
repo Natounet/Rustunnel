@@ -1,7 +1,5 @@
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::config::ResolverOpts;
+use hickory_resolver::config::*;
 use hickory_resolver::TokioAsyncResolver;
-use rustunnel_lib::dns::*;
 use std::io::{Error as IoError, ErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -20,25 +18,20 @@ use tokio::net::{TcpListener, TcpStream};
 ///
 /// Returns `Socks5Error::DomainLookupFailed` if resolution fails
 async fn resolve_domain_to_ip(domain: &str) -> Result<String, String> {
-    println!("[INFO] Starting domain resolution for {}", domain);
-    // Use a pre-configured global resolver or create it outside the async function
-    let resolver = get_resolver(); // Assuming you have a get_resolver() function
+    // Créer le resolver directement de manière asynchrone
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
-    match resolver.lookup_ip(domain).await {
-        Ok(response) => {
-            let addr = response.iter().next().ok_or(format!(
-                "[ERROR] Resolution for the domain {} failed",
-                domain
-            ))?;
+    // Utiliser le resolver
+    let response = match resolver.lookup_ip(domain).await {
+        Ok(result) => result,
+        Err(e) => return Err(e.to_string()),
+    };
+    let addr = response
+        .iter()
+        .next()
+        .ok_or(format!("Resolution for the domain {} failed", domain))?;
 
-            println!("[INFO] Successfully resolved {} to {}", domain, addr);
-            Ok(addr.to_string())
-        }
-        Err(e) => {
-            println!("[ERROR] Failed to resolve domain {}: {}", domain, e);
-            Err(e.to_string())
-        }
-    }
+    Ok(addr.to_string())
 }
 
 /// Establishes a TCP connection to a target service
@@ -51,22 +44,14 @@ async fn resolve_domain_to_ip(domain: &str) -> Result<String, String> {
 /// # Returns
 ///
 /// A connected TCP socket or an I/O error
-async fn connect_to_service(ip: &str, port: u16) -> Result<u16, IoError> {
-    println!("[INFO] Trying to connect to {}:{}", ip, port);
+async fn connect_to_service(ip: &str, port: u16) -> Result<TcpStream, IoError> {
     // Construct full address string
-    match create_tcp_session(&ip, port, "natounet.com", &get_resolver()).await {
-        Ok(session_id) => {
-            println!("[INFO] Successfully connected to {}:{}", ip, port);
-            Ok(session_id)
-        }
-        Err(e) => {
-            println!("[ERROR] Connection failed to {}:{} - {}", ip, port, e);
-            return Err(std::io::Error::new(
-                ErrorKind::ConnectionRefused,
-                format!("Failed to connect to {}:{} - {}", ip, port, e),
-            ));
-        }
-    }
+    let address = format!("{}:{}", ip, port);
+
+    // Attempt to connect to the service
+    let socket = TcpStream::connect(address).await?;
+    println!("Connected to {}:{}", ip, port);
+    Ok(socket)
 }
 
 /// Bidirectional proxy handler that logs TCP traffic between a client and a service
@@ -103,13 +88,10 @@ async fn connect_to_service(ip: &str, port: u16) -> Result<u16, IoError> {
 /// * Automatically terminates when either connection is closed
 async fn proxy_bidirectional(
     mut client_socket: &mut TcpStream,
-    mut session_id: u16,
+    mut service_socket: TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "[INFO] Starting bidirectional proxy for session {}",
-        session_id
-    );
     let (mut client_read, mut client_write) = client_socket.split();
+    let (mut service_read, mut service_write) = service_socket.split();
 
     // Tampon pour stocker temporairement les données
     let mut buffer_client = [0u8; 8192];
@@ -121,30 +103,39 @@ async fn proxy_bidirectional(
             result = client_read.read(&mut buffer_client) => {
                 match result? {
                     0 => {
-                        println!("[INFO] The client closed the connection for session {}", session_id);
+                        println!("[INFO] The client closed the connection.");
                         break;
                     }
                     n => {
                         // Log des données du client vers le service
-                        println!("[INFO] Client -> Service: {} bytes for session {}", n, session_id);
+                        println!("Client -> Service: {} bytes", n);
                         //println!("Data: {:?}", &buffer_client[..n]);
 
                         // Envoie au service
-                        match send_tcp_data(session_id, &buffer_client[..n], "natounet.com", &get_resolver()).await {
-                            Ok(_) => println!("[INFO] Successfully sent data to service for session {}", session_id),
-                            Err(e) => {
-                                eprintln!("[ERROR] Failed sending data for session {}: {}", session_id, e);
-                                break;
-                            }
-                        }
+                        service_write.write_all(&buffer_client[..n]).await?;
                     }
                 }
             }
+            // Service -> Client
+            result = service_read.read(&mut buffer_service) => {
+                match result? {
+                    0 => {
+                        println!("[INFO] The server closed the connection");
+                        break;
+                    }
+                    n => {
+                        // Log des données du service vers le client
+                        println!("Service -> Client: {} bytes", n);
+                        //println!("Data: {:?}", &buffer_service[..n]);
 
+                        // Envoie au client
+                        client_write.write_all(&buffer_service[..n]).await?;
+                    }
+                }
+            }
         }
     }
 
-    println!("[INFO] Proxy session {} terminated", session_id);
     Ok(())
 }
 
@@ -162,59 +153,40 @@ async fn proxy_bidirectional(
 ///
 /// Possible errors include invalid format or no acceptable methods
 async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), String> {
-    println!("[INFO] Starting SOCKS5 handshake");
     let mut buf = [0; 1024];
 
     // Read client's method selection message
     let n = match socket.read(&mut buf).await {
-        Ok(n) => {
-            println!("[INFO] Read {} bytes during handshake", n);
-            n
-        }
-        Err(e) => {
-            println!("[ERROR] Failed to read during handshake: {}", e);
-            return Err(e.to_string());
-        }
+        Ok(n) => n,
+        Err(e) => return Err(e.to_string()),
     };
 
     // Validate SOCKS5 version
     if n < 2 || buf[0] != 0x05 {
-        println!("[ERROR] Invalid SOCKS5 format received");
-        return Err("[ERROR] Invalid SOCKS5 format".to_string());
+        return Err("ERROR : Invalid SOCKS5 format".to_string());
     }
 
     // Check number of authentication methods
     let auth_count = buf[1] as usize;
     if n < 2 + auth_count {
-        println!("[ERROR] Invalid SOCKS5 request format");
-        return Err("[ERROR] Invalid SOCKS5 request format".to_string());
+        return Err("ERROR : Invalid SOCKS5 request format".to_string());
     }
 
     // Check for no authentication method (0x00)
     let auth_methods = &buf[2..2 + auth_count];
     if !auth_methods.contains(&0x00) {
-        println!("[ERROR] No acceptable authentication methods");
         // Respond with "No acceptable methods"
         match socket.write_all(&[0x05, 0xFF]).await {
-            Ok(_) => println!("[INFO] Sent authentication failure response"),
-            Err(e) => {
-                println!("[ERROR] Failed to send authentication failure: {}", e);
-                return Err(e.to_string());
-            }
+            Ok(_) => (),
+            Err(e) => return Err(e.to_string()),
         };
-        return Err("[ERROR] No acceptable methods".to_string());
+        return Err("ERROR : No acceptable methods".to_string());
     }
 
     // Respond with successful no-authentication method
     match socket.write_all(&[0x05, 0x00]).await {
-        Ok(_) => {
-            println!("[INFO] SOCKS5 handshake completed successfully");
-            Ok(())
-        }
-        Err(e) => {
-            println!("[ERROR] Failed to send handshake success: {}", e);
-            Err(e.to_string())
-        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -232,29 +204,16 @@ async fn handle_socks5_handshake(socket: &mut TcpStream) -> Result<(), String> {
 ///
 /// Possible errors include invalid request, domain resolution failure, etc.
 async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError> {
-    println!("[INFO] Starting to handle TCP connection request");
     let mut buf = [0; 1024];
 
     // Read connection request
-    let n = match socket.read(&mut buf).await {
-        Ok(n) => {
-            println!("[INFO] Read {} bytes from connection request", n);
-            n
-        }
-        Err(e) => {
-            println!("[ERROR] Failed to read connection request: {}", e);
-            return Err(e);
-        }
-    };
-
+    let n = socket.read(&mut buf).await?;
     if n < 4 {
-        println!("[ERROR] Request too short: {} bytes", n);
         return Err(IoError::new(ErrorKind::InvalidData, "Request too short"));
     }
 
     // Validate SOCKS5 request format
     if buf[0] != 0x05 || buf[1] != 0x01 || buf[2] != 0x00 {
-        println!("[ERROR] Invalid SOCKS5 request format");
         return Err(IoError::new(
             ErrorKind::InvalidData,
             "Invalid SOCKS5 request",
@@ -263,110 +222,76 @@ async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError
 
     // Parse destination address based on address type
     let addr_type = buf[3];
-    println!("[INFO] Processing address type: {}", addr_type);
     let (dst_addr, total_len) = match addr_type {
         0x01 => {
             // IPv4 address
             if n < 10 {
-                println!("[ERROR] Incomplete IPv4 request");
                 return Err(IoError::new(
                     ErrorKind::InvalidData,
                     "Incomplete IPv4 request",
                 ));
             }
             let ip = format!("{}.{}.{}.{}", buf[4], buf[5], buf[6], buf[7]);
-            println!("[INFO] IPv4 address parsed: {}", ip);
             (ip, 8)
         }
         0x03 => {
             // Domain name
             let domain_len = buf[4] as usize;
             if n < domain_len + 7 {
-                println!("[ERROR] Incomplete domain request");
                 return Err(IoError::new(
                     ErrorKind::InvalidData,
                     "Incomplete domain request",
                 ));
             }
             let domain = match String::from_utf8(buf[5..5 + domain_len].to_vec()) {
-                Ok(d) => {
-                    println!("[INFO] Domain parsed: {}", d);
-                    d
-                }
-                Err(_) => {
-                    println!("[ERROR] Invalid domain encoding");
-                    return Err(IoError::new(ErrorKind::InvalidData, "Invalid domain"));
-                }
+                Ok(d) => d,
+                Err(_) => return Err(IoError::new(ErrorKind::InvalidData, "Invalid domain")),
             };
             (domain, domain_len + 5)
         }
-        0x04 => {
-            println!("[ERROR] IPv6 not supported");
-            return Err(IoError::new(ErrorKind::InvalidInput, "IPv6 not supported"));
-        }
+        0x04 => return Err(IoError::new(ErrorKind::InvalidInput, "IPv6 not supported")),
         _ => {
-            println!("[ERROR] Unsupported address type: {}", addr_type);
             return Err(IoError::new(
                 ErrorKind::InvalidData,
                 "Unsupported address type",
-            ));
+            ))
         }
     };
 
     // Extract destination port
     let dst_port = u16::from_be_bytes([buf[total_len], buf[total_len + 1]]);
-    println!("[INFO] Destination port: {}", dst_port);
 
     // Resolve domain to IP if needed
     let target_ip = if addr_type == 0x03 {
         match resolve_domain_to_ip(&dst_addr).await {
-            Ok(ip) => {
-                println!("[INFO] Domain resolved to IP: {}", ip);
-                ip
-            }
-            Err(_) => {
-                println!("[ERROR] Domain resolution failed for {}", dst_addr);
-                return Err(IoError::new(ErrorKind::Other, "Domain resolution failed"));
-            }
+            Ok(ip) => ip,
+            Err(_) => return Err(IoError::new(ErrorKind::Other, "Domain resolution failed")),
         }
     } else {
         dst_addr
     };
 
     // Establish connection to target service
-    let session_id = match connect_to_service(target_ip.as_str(), dst_port).await {
-        Ok(session_id) => {
-            println!(
-                "[INFO] Service connection established with session ID: {}",
-                session_id
-            );
-            session_id
-        }
-        Err(e) => {
-            println!("[ERROR] Service connection failed: {}", e);
-            return Err(IoError::new(ErrorKind::ConnectionRefused, e.to_string()));
+    let mut service_socket = match connect_to_service(&target_ip, dst_port).await {
+        Ok(socket) => socket,
+        Err(_) => {
+            return Err(IoError::new(
+                ErrorKind::ConnectionRefused,
+                "Service connection failed",
+            ))
         }
     };
 
     // Send successful connection response
-    match socket
+    socket
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-        .await
-    {
-        Ok(_) => println!("[INFO] Sent successful connection response"),
-        Err(e) => {
-            println!("[ERROR] Failed to send connection response: {}", e);
-            return Err(e);
-        }
-    }
+        .await?;
 
     // Proxy data between client and target service
-    if let Err(e) = proxy_bidirectional(socket, session_id).await {
-        println!("[ERROR] Proxy operation failed: {}", e);
+    if let Err(e) = proxy_bidirectional(socket, service_socket).await {
         return Err(IoError::new(ErrorKind::Other, e.to_string()));
     }
 
-    println!("[INFO] TCP connection handling completed successfully");
     Ok(())
 }
 
@@ -378,7 +303,6 @@ async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError
 ///
 /// Performs SOCKS5 handshake and connection request processing
 async fn handle_connection(mut socket: TcpStream) {
-    println!("[INFO] New client connection accepted");
     // Perform SOCKS5 handshake
     if let Err(e) = handle_socks5_handshake(&mut socket).await {
         eprintln!("[ERROR] SOCKS5 handshake failed: {:?}", e);
@@ -389,7 +313,6 @@ async fn handle_connection(mut socket: TcpStream) {
     if let Err(e) = handle_client_tcp_connect(&mut socket).await {
         eprintln!("[ERROR] TCP connection error: {:?}", e);
     }
-    println!("[INFO] Client connection handling completed");
 }
 
 /// Main entry point for the SOCKS5 proxy server
@@ -405,7 +328,6 @@ async fn handle_connection(mut socket: TcpStream) {
 /// May panic if port binding fails
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
-    println!("[INFO] Starting SOCKS5 proxy server");
     // Bind to localhost on port 1080 (standard SOCKS5 port)
     let listener = TcpListener::bind("127.0.0.1:1080")
         .await
