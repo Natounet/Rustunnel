@@ -158,7 +158,10 @@ impl Handler {
                 self.do_handle_request_create(request, response).await
             }
             name if name.to_string().starts_with("response.") => {
-                todo!("Implémenter le handle pour les réponses")
+                self.do_handle_request_response(request, response).await
+            }
+            name if name.to_string().starts_with("close.") => {
+                self.do_handle_request_close(request, response).await
             }
             name => {
                 // If the domain is not in our custom zones, forward to 9.9.9.9
@@ -274,6 +277,84 @@ impl Handler {
         Ok(responder.send_response(response).await?)
     }
 
+    async fn do_handle_request_close<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        mut responder: R,
+    ) -> Result<ResponseInfo, Error> {
+        println!(
+            "Closing request received: {}",
+            request.query().name().to_string()
+        );
+        // Crée un constructeur de réponse à partir de la requête
+        let builder = MessageResponseBuilder::from_message_request(request);
+
+        // Prépare l'en-tête de la réponse
+        let mut header = Header::response_from_request(request.header());
+        header.set_authoritative(true);
+
+        // Requête de forme
+        // CLOSE.[UID].[DOMAIN]
+
+        let mut message = String::from("OK");
+
+        // Récupère les parties de la requête
+        let parts: Vec<String> = request
+            .query()
+            .name()
+            .to_string()
+            .split('.')
+            .map(|s| s.to_string())
+            .collect();
+
+        let uid: u16 = match parts[1].parse() {
+            Ok(p) => {
+                if !self.sockets.lock().unwrap().contains_key(&p) {
+                    eprintln!("Uid does not exist in sockets");
+                    message = String::from("ERROR : Uid does not exist in sockets");
+                } else {
+                    {
+                        if let Ok(mut sockets) = self.sockets.lock() {
+                            if sockets.contains_key(&p) {
+                                sockets.remove(&p);
+                            }
+                        }
+
+                        if let Ok(mut request_fragments) = self.request_fragments.lock() {
+                            if request_fragments.contains_key(&p) {
+                                request_fragments.remove(&p);
+                            }
+                        }
+
+                        if let Ok(mut response_fragments) = self.response_fragments.lock() {
+                            if response_fragments.contains_key(&p) {
+                                response_fragments.remove(&p);
+                            }
+                        }
+                    }
+                }
+                p
+            }
+            Err(_) => {
+                eprintln!("Invalid uid received");
+                message = String::from("ERROR : Invalid uid");
+                0
+            }
+        };
+
+        // Crée l'enregistrement TXT avec la chaîne construite
+        let rdata = RData::TXT(TXT::new(vec![message.to_string()]));
+
+        // Crée la liste des enregistrements avec une TTL de 60 secondes
+        let records = vec![Record::from_rdata(request.query().name().into(), 0, rdata)];
+
+        // Construit la réponse finale
+        let response = builder.build(header, records.iter(), &[], &[], &[]);
+
+        // Envoie la réponse
+        Ok(responder.send_response(response).await?)
+    }
+
     /// Handle requests for *.hello.{domain}.
     async fn do_handle_request_data<R: ResponseHandler>(
         &self,
@@ -306,13 +387,13 @@ impl Handler {
             Ok(p) => {
                 if !self.sockets.lock().unwrap().contains_key(&p) {
                     eprintln!("Uid does not exist in sockets");
-                    message = String::from("Uid does not exist in sockets");
+                    message = String::from("ERROR : Uid does not exist in sockets");
                 }
                 p
             }
             Err(_) => {
                 eprintln!("Invalid uid received");
-                message = String::from("Invalid uid");
+                message = String::from("ERROR : Invalid uid");
                 0
             }
         };
@@ -323,7 +404,7 @@ impl Handler {
             Ok(p) => p,
             Err(_) => {
                 eprintln!("Invalid max sequence number received");
-                message = String::from("Invalid max sequence number");
+                message = String::from("ERROR : Invalid max sequence number");
                 0
             }
         };
@@ -331,13 +412,15 @@ impl Handler {
         let seq: u16 = match parts[2].parse() {
             Ok(p) => {
                 if p >= maxseq {
-                    message = String::from("Sequence number greater than or equal to max sequence");
+                    message = String::from(
+                        "ERROR : Sequence number greater than or equal to max sequence",
+                    );
                 }
                 p
             }
             Err(_) => {
                 eprintln!("Invalid sequence number received");
-                message = String::from("Invalid sequence number");
+                message = String::from("ERROR : Invalid sequence number");
                 0
             }
         };
@@ -479,10 +562,12 @@ impl Handler {
         }
         println!("Total response size: {} bytes", response.len());
 
+        println!("Response buffer contents: {:?}", response);
         println!("Base32 encoding response...");
         let mut response_splitted = Vec::new();
         let encoded = base32::encode(Alphabet::Rfc4648 { padding: false }, &response);
         println!("Response encoded, splitting into chunks...");
+        println!("Base32 encoded response: {}", encoded);
 
         for (i, chunk) in encoded.as_bytes().chunks(254).enumerate() {
             let chunk_str = String::from_utf8(chunk.to_vec()).unwrap();
@@ -499,6 +584,82 @@ impl Handler {
         println!("Response fragments stored successfully");
 
         Ok(())
+    }
+    /// Handle requests for response.uid.{domain}.
+    async fn do_handle_request_response<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        mut responder: R,
+    ) -> Result<ResponseInfo, Error> {
+        println!("INFO: Handling response request");
+
+        // Crée un constructeur de réponse à partir de la requête
+        let builder = MessageResponseBuilder::from_message_request(request);
+
+        // Prépare l'en-tête de la réponse
+        let mut header = Header::response_from_request(request.header());
+        header.set_authoritative(true);
+
+        let mut message = String::from("EOF");
+
+        println!(
+            "INFO: Parsing request name: {}",
+            request.query().name().to_string()
+        );
+        let parts: Vec<String> = request
+            .query()
+            .name()
+            .to_string()
+            .split('.')
+            .map(|s| s.to_string())
+            .collect();
+
+        let uid: u16 = match parts[1].parse() {
+            Ok(p) => {
+                if !self.sockets.lock().unwrap().contains_key(&p) {
+                    eprintln!("ERROR: Uid {} does not exist in sockets", p);
+                    message = "ERROR : Uid does not exist in sockets".to_string();
+                } else {
+                    println!("INFO: Found valid socket for uid {}", p);
+                }
+                p
+            }
+            Err(_) => {
+                eprintln!("ERROR: Invalid uid received: {}", parts[1]);
+                message = String::from("ERROR : Invalid uid");
+                0
+            }
+        };
+
+        if message.starts_with("ERROR") {
+            println!("INFO: Returning error message: {}", message);
+        } else if let Some(fragments) = self.response_fragments.lock().unwrap().get_mut(&uid) {
+            if !fragments.is_empty() {
+                message = fragments.remove(0);
+                println!(
+                    "INFO: Retrieved fragment from response queue, {} fragments remaining",
+                    fragments.len()
+                );
+            } else {
+                println!("INFO: No more fragments in response queue");
+            }
+        } else {
+            println!("INFO: No response fragments found for uid {}", uid);
+        }
+
+        // Crée l'enregistrement TXT avec la chaîne construite
+        let rdata = RData::TXT(TXT::new(vec![message.clone()]));
+        println!("INFO: Sending response with message: {}", message);
+
+        // Crée la liste des enregistrements avec une TTL de 60 secondes
+        let records = vec![Record::from_rdata(request.query().name().into(), 0, rdata)];
+
+        // Construit la réponse finale
+        let response = builder.build(header, records.iter(), &[], &[], &[]);
+
+        // Envoie la réponse
+        println!("INFO: Sending DNS response");
+        Ok(responder.send_response(response).await?)
     }
 }
 
