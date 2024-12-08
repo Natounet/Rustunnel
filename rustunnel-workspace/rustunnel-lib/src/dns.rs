@@ -218,6 +218,20 @@ pub async fn send_tcp_data(
     }
     Ok(())
 }
+
+pub async fn close_tcp_session(
+    session_id: u16,
+    domain: &str,
+    resolver: &TokioAsyncResolver,
+) -> Result<(), ()> {
+    let query: String = format!("CLOSE.{}.{}", session_id, domain);
+
+    match send_request(&query, resolver).await {
+        Ok(_) => Ok(()),
+        Err(_) => Err(()),
+    }
+}
+
 /// Retrieve the response data from the server
 /// Query :RESPONSE.UID.DOMAIN
 /// Response : Base32 encoded data or EOF
@@ -228,27 +242,40 @@ pub async fn retrieve_response(
 ) -> Result<Vec<u8>, String> {
     let mut b32_encoded_fragments: Vec<String> = vec![];
     let query: String = format!("RESPONSE.{}.{}", session_id, domain);
-    loop {
-        let i: usize = 0;
+    let mut retry_count = 0;
+
+    while retry_count < 10 {
         match send_request(&query, resolver).await {
-            Ok(response) => match response {
-                ref eol if eol == "EOL" => break,
-                b32_content => b32_encoded_fragments.push(b32_content),
-            },
-            // Retry to contact the server 10 times
+            Ok(response) => {
+                println!("Response: {}", response);
+                match response.as_str() {
+                    resp if resp.starts_with("ERROR") => return Err(response),
+                    "EOF" => break,
+                    b32_content => b32_encoded_fragments.push(b32_content.to_string()),
+                }
+                retry_count = 0; // Reset retry count on successful response
+            }
             Err(_) => {
-                if i == 10 {
-                    break;
-                } else {
+                retry_count += 1;
+                if retry_count >= 10 {
                     return Err(
-                        "ERROR : Failed to contact the DNS server for 10 times when trying to get responses.".to_string()
+                        "ERROR: Failed to contact the DNS server 10 times when trying to get responses.".to_string()
                     );
                 }
             }
         }
     }
-    Ok(decode_base32(b32_encoded_fragments)
-        .into_iter()
-        .flatten()
-        .collect())
+
+    // Concatenate fragments before decoding
+    let full_b32_content = b32_encoded_fragments.join("");
+    println!("Full Base32 content: {}", full_b32_content);
+
+    // Try decoding the full concatenated string
+    match decode_base32_fullcontent(full_b32_content) {
+        Some(decoded_bytes) => {
+            println!("Decoded bytes: {:?}", decoded_bytes);
+            Ok(decoded_bytes)
+        }
+        None => Err("Failed to decode base32 response".to_string()),
+    }
 }
