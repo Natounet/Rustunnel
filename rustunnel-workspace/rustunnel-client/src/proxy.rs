@@ -1,6 +1,3 @@
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::config::ResolverOpts;
-use hickory_resolver::TokioAsyncResolver;
 use rustunnel_lib::dns::*;
 use std::io::{Error as IoError, ErrorKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -102,52 +99,121 @@ async fn connect_to_service(ip: &str, port: u16) -> Result<u16, IoError> {
 /// * Logs traffic in both directions with hex and ASCII representation
 /// * Automatically terminates when either connection is closed
 async fn proxy_bidirectional(
-    mut client_socket: &mut TcpStream,
-    mut session_id: u16,
+    client_socket: &mut TcpStream,
+    session_id: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "[INFO] Starting bidirectional proxy for session {}",
         session_id
     );
-    let (mut client_read, mut client_write) = client_socket.split();
 
-    // Tampon pour stocker temporairement les données
-    let mut buffer_client = [0u8; 8192];
-    let mut buffer_service = [0u8; 8192];
+    // Create a buffer for reading client data
+    let mut buffer = [0u8; 8192];
 
+    // Continue processing requests until the connection is closed
     loop {
-        tokio::select! {
-            // Client -> Service
-            result = client_read.read(&mut buffer_client) => {
-                match result? {
-                    0 => {
-                        println!("[INFO] The client closed the connection for session {}", session_id);
+        // Use tokio::time::timeout to prevent indefinite blocking
+        match tokio::time::timeout(std::time::Duration::from_secs(30), client_socket.readable())
+            .await
+        {
+            Ok(Ok(())) => {
+                // Socket is readable, attempt to read
+                match client_socket.read(&mut buffer).await {
+                    Ok(0) => {
+                        println!("[INFO] Client connection closed for session {}", session_id);
                         break;
                     }
-                    n => {
-                        // Log des données du client vers le service
-                        println!("[INFO] Client -> Service: {} bytes for session {}", n, session_id);
-                        //println!("Data: {:?}", &buffer_client[..n]);
+                    Ok(n) => {
+                        println!(
+                            "[INFO] Client -> Service: {} bytes for session {}",
+                            n, session_id
+                        );
 
-                        // Envoie au service
-                        match send_tcp_data(session_id, &buffer_client[..n], "natounet.com", &get_resolver()).await {
-                            Ok(_) => println!("[INFO] Successfully sent data to service for session {}", session_id),
+                        // Send data to service
+                        match send_tcp_data(
+                            session_id,
+                            &buffer[..n],
+                            "natounet.com",
+                            &get_resolver(),
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                println!(
+                                    "[INFO] Successfully sent data to service for session {}",
+                                    session_id
+                                );
+
+                                // Retrieve and send back response
+                                match retrieve_response(session_id, "natounet.com", &get_resolver())
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        if response.is_empty() {
+                                            println!(
+                                                "[INFO] Empty response received, closing session {}",
+                                                session_id
+                                            );
+                                            break;
+                                        }
+
+                                        println!(
+                                            "[INFO] Service -> Client: {} bytes for session {}",
+                                            response.len(),
+                                            session_id
+                                        );
+
+                                        match client_socket.write_all(&response).await {
+                                            Ok(_) => {
+                                                println!("[INFO] Successfully sent response back to client for session {}", session_id)
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[ERROR] Failed to send response back to client for session {}: {}", session_id, e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[ERROR] Failed getting response for session {}: {}",
+                                            session_id, e
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
                             Err(e) => {
-                                eprintln!("[ERROR] Failed sending data for session {}: {}", session_id, e);
+                                eprintln!(
+                                    "[ERROR] Failed sending data for session {}: {}",
+                                    session_id, e
+                                );
                                 break;
                             }
                         }
                     }
+                    Err(e) => {
+                        eprintln!("[ERROR] Read error for session {}: {}", session_id, e);
+                        break;
+                    }
                 }
             }
-
+            Ok(Err(e)) => {
+                eprintln!(
+                    "[ERROR] Socket read error for session {}: {}",
+                    session_id, e
+                );
+                break;
+            }
+            Err(_) => {
+                println!("[INFO] Read timeout for session {}", session_id);
+                break;
+            }
         }
     }
 
     println!("[INFO] Proxy session {} terminated", session_id);
     Ok(())
 }
-
 /// Handles the initial SOCKS5 handshake (method selection)
 ///
 /// # Arguments
@@ -366,6 +432,8 @@ async fn handle_client_tcp_connect(socket: &mut TcpStream) -> Result<(), IoError
         return Err(IoError::new(ErrorKind::Other, e.to_string()));
     }
 
+    // HARD CODED DOMAIN for the moment
+    close_tcp_session(session_id, "natounet.com", &get_resolver()).await;
     println!("[INFO] TCP connection handling completed successfully");
     Ok(())
 }
@@ -405,6 +473,8 @@ async fn handle_connection(mut socket: TcpStream) {
 /// May panic if port binding fails
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
+    let domain = "natounet.com"; // Initialize the global domain variable
+
     println!("[INFO] Starting SOCKS5 proxy server");
     // Bind to localhost on port 1080 (standard SOCKS5 port)
     let listener = TcpListener::bind("127.0.0.1:1080")
