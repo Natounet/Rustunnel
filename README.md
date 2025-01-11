@@ -10,12 +10,17 @@ The project aims to provide a powerful yet lightweight solution for bypassing ne
 
 ---
 
-## Features
+## Work in Progress (WIP)
 
-- [ ] **Covert Communication**: Transforms TCP/UDP traffic into DNS queries, allowing communication in restricted environments.
-- [ ] **Custom DNS Protocol**: Encodes and decodes traffic into DNS queries and responses.
-- [ ] **Bi-directional Proxy**: Enables seamless forwarding of traffic between client and server.
-- **Rust-based Implementation**: Ensures high performance and memory safety.
+Rustunnel is currently under development. Planned features include:
+Actually, **only protocols without SSL/TLS works.**
+- [X] bi-directional communication support for TCP.
+- [ ] Authentication mechanism for secure communication.
+- [X] Configurable DNS tunneling domain.
+- [ ] Robust error handling and retries.
+- [ ] Detailed documentation for deployment and customization.
+
+Contributions are welcome to help expand and refine this project!
 
 ---
 
@@ -49,19 +54,7 @@ The Rustunnel server is a custom DNS server that decodes DNS traffic from the cl
 
 ---
 
-## Work in Progress (WIP)
 
-Rustunnel is currently under development. Planned features include:
-
-- [ ] Full bi-directional communication support for TCP and UDP.
-- [ ] Authentication mechanism for secure communication.
-- [ ] Configurable DNS tunneling domain.
-- [ ] Robust error handling and retries.
-- [ ] Detailed documentation for deployment and customization.
-
-Contributions are welcome to help expand and refine this project!
-
----
 
 ## Getting Started
 
